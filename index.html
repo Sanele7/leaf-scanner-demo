@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Medicinal Leaf Scanner</title>
+<style>
+  :root {
+    --forest-dark: #1E3D20;
+    --forest: #2C5F2D;
+    --moss: #6E9152;
+    --gold: #D6A345;
+    --cream: #F6F5EF;
+    --danger: #B5493F;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #app { position: relative; width: 100%; height: 100%; }
+
+  #camera-video {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    object-fit: cover; background: #000;
+  }
+  #capture-canvas { display: none; }
+
+  .top-bar {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: max(16px, env(safe-area-inset-top)) 20px 16px;
+    background: linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0));
+    display: flex; align-items: center; justify-content: space-between;
+    z-index: 10;
+  }
+  .app-title { color: #fff; font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--gold);
+    display: inline-block; margin-right: 7px; vertical-align: 1px;
+  }
+  .status-dot.live { background: #7BC67E; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .status-text { color: rgba(255,255,255,0.85); font-size: 12.5px; }
+
+  .viewfinder {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -58%);
+    width: 68vw; height: 68vw; max-width: 300px; max-height: 300px;
+    z-index: 5; pointer-events: none;
+  }
+  .viewfinder svg { width: 100%; height: 100%; }
+  .corner { stroke: var(--gold); stroke-width: 3; fill: none; stroke-linecap: round; }
+
+  .hint-text {
+    position: absolute; top: calc(50% + 40vw); left: 50%; transform: translateX(-50%);
+    color: rgba(255,255,255,0.9); font-size: 13.5px; text-align: center;
+    background: rgba(0,0,0,0.4); padding: 7px 16px; border-radius: 20px;
+    white-space: nowrap; z-index: 5;
+  }
+
+  .bottom-sheet {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: var(--cream);
+    border-radius: 22px 22px 0 0;
+    padding: 18px 20px max(18px, env(safe-area-inset-bottom));
+    z-index: 10;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.25);
+    max-height: 46vh; overflow-y: auto;
+    transition: transform 0.25s ease;
+  }
+  .sheet-handle {
+    width: 36px; height: 4px; background: rgba(30,61,32,0.2);
+    border-radius: 2px; margin: 0 auto 14px;
+  }
+
+  .result-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 0;
+  }
+  .result-row + .result-row { border-top: 1px solid rgba(30,61,32,0.08); }
+  .result-rank {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0;
+  }
+  .result-rank.r0 { background: var(--forest); }
+  .result-rank.r1 { background: var(--moss); }
+  .result-rank.r2 { background: #A9AD9A; }
+  .result-info { flex: 1; min-width: 0; }
+  .result-name { font-size: 15px; font-weight: 600; color: var(--forest-dark); }
+  .result-sci { font-size: 12px; font-style: italic; color: #6b7268; margin-top: 1px; }
+  .result-bar-track {
+    width: 100%; height: 5px; background: rgba(30,61,32,0.1);
+    border-radius: 3px; margin-top: 6px; overflow: hidden;
+  }
+  .result-bar-fill { height: 100%; border-radius: 3px; background: var(--forest); transition: width 0.3s ease; }
+  .result-pct { font-size: 13px; font-weight: 700; color: var(--forest-dark); width: 42px; text-align: right; flex-shrink: 0; }
+
+  .idle-message { text-align: center; padding: 20px 10px; color: #6b7268; font-size: 13.5px; line-height: 1.5; }
+  .idle-message strong { color: var(--forest-dark); display: block; font-size: 15px; margin-bottom: 4px; }
+
+  .overlay-message {
+    position: absolute; inset: 0; z-index: 20;
+    background: var(--forest-dark);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 32px; text-align: center; color: #fff;
+  }
+  .overlay-message.hidden { display: none; }
+  .overlay-icon { font-size: 40px; margin-bottom: 14px; }
+  .overlay-title { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+  .overlay-body { font-size: 13.5px; color: rgba(255,255,255,0.75); line-height: 1.5; max-width: 280px; }
+  .overlay-body code { background: rgba(255,255,255,0.12); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .retry-btn {
+    margin-top: 18px; background: var(--gold); color: var(--forest-dark);
+    border: none; padding: 11px 24px; border-radius: 22px;
+    font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <video id="camera-video" autoplay playsinline muted></video>
+  <canvas id="capture-canvas" width="224" height="224"></canvas>
+
+  <div class="top-bar">
+    <span class="app-title">Leaf Scanner</span>
+    <span class="status-text"><span class="status-dot" id="status-dot"></span><span id="status-label">Starting...</span></span>
+  </div>
+
+  <div class="viewfinder">
+    <svg viewBox="0 0 100 100">
+      <path class="corner" d="M8,28 V12 a4,4 0 0 1 4,-4 H28" />
+      <path class="corner" d="M72,8 H88 a4,4 0 0 1 4,4 V28" />
+      <path class="corner" d="M92,72 V88 a4,4 0 0 1 -4,4 H72" />
+      <path class="corner" d="M28,92 H12 a4,4 0 0 1 -4,-4 V72" />
+    </svg>
+  </div>
+  <div class="hint-text" id="hint-text">Center the leaf in the frame</div>
+
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div id="results-container">
+      <div class="idle-message">
+        <strong>Point the camera at a leaf</strong>
+        Hold steady, good light, plain background works best.
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay-message" id="overlay-loading">
+    <div class="overlay-icon">&#127807;</div>
+    <div class="overlay-title" id="loading-title">Loading model...</div>
+    <div class="overlay-body" id="loading-body">This happens once per visit (about 25MB).</div>
+  </div>
+
+  <div class="overlay-message hidden" id="overlay-error">
+    <div class="overlay-icon">&#9888;</div>
+    <div class="overlay-title" id="error-title">Something went wrong</div>
+    <div class="overlay-body" id="error-body"></div>
+    <button class="retry-btn" onclick="location.reload()">Try again</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script>
+// ============================================================================
+// CONFIGURATION -- edit these to match your deployment
+// ============================================================================
+
+// Path to your converted model's model.json, relative to this HTML file
+// (or an absolute URL if hosting the model elsewhere).
+const MODEL_URL = 'model.json';
+
+// How often to run inference on the live camera feed, in milliseconds.
+// Lower = more responsive but more battery/CPU use. 700-1000ms is a
+// reasonable balance on most phones for a model this size.
+const INFERENCE_INTERVAL_MS = 800;
+
+// Only show a result if the model's confidence exceeds this. Below it,
+// the UI shows "not confident enough" rather than a possibly-wrong guess.
+const MIN_CONFIDENCE_TO_SHOW = 0.15;
+
+// MobileNetV2 preprocessing: scale pixels from [0,255] to [-1,1].
+// If you convert a DIFFERENT architecture, change this to match --
+// ResNet50 and EfficientNetB0 use different preprocessing and predictions
+// will be wrong (though not obviously wrong) if this doesn't match.
+function preprocessForModel(tensor) {
+  return tensor.toFloat().div(127.5).sub(1);
+}
+
+// Class names in the EXACT order your model was trained with (alphabetical,
+// matching Keras' flow_from_directory default and this project's own
+// class_indices.csv). Do not reorder -- index position is what maps a
+// model output to a species name.
+const CLASS_NAMES = [
+  'Aloevera','Amla','Amruthaballi','Arali','Astma_weed','Badipala','Balloon_Vine',
+  'Bamboo','Beans','Betel','Bhrami','Castor','Catharanthus','Chakte','Chilly',
+  'Citron lime (herelikai)','Common rue(naagdalli)','Coriender','Curry','Doddpathre',
+  'Drumstick','Ekka','Eucalyptus','Gasagase','Ginger','Guava','Henna','Hibiscus',
+  'Honge','Insulin','Jackfruit','Kambajala','Lemon','Malabar_Spinach','Mango',
+  'Marigold','Mint','Neem','Nelavembu'
+];
+
+// Scientific names for display alongside the common name. This is reference
+// data only, not medicinal-use information -- see the note below.
+const SCIENTIFIC_NAMES = {
+  'Aloevera': 'Aloe vera', 'Amla': 'Phyllanthus emblica', 'Amruthaballi': 'Tinospora cordifolia',
+  'Arali': 'Nerium oleander', 'Astma_weed': 'Euphorbia hirta', 'Badipala': 'Pongamia pinnata',
+  'Balloon_Vine': 'Cardiospermum halicacabum', 'Bamboo': 'Bambusa vulgaris',
+  'Beans': 'Lablab purpureus', 'Betel': 'Piper betle', 'Bhrami': 'Bacopa monnieri',
+  'Castor': 'Ricinus communis', 'Catharanthus': 'Catharanthus roseus',
+  'Chakte': 'Pterocarpus marsupium', 'Chilly': 'Capsicum annuum',
+  'Citron lime (herelikai)': 'Citrus medica', 'Common rue(naagdalli)': 'Ruta graveolens',
+  'Coriender': 'Coriandrum sativum', 'Curry': 'Murraya koenigii',
+  'Doddpathre': 'Plectranthus amboinicus', 'Drumstick': 'Moringa oleifera',
+  'Ekka': 'Calotropis gigantea', 'Eucalyptus': 'Eucalyptus globulus',
+  'Gasagase': 'Papaver somniferum', 'Ginger': 'Zingiber officinale',
+  'Guava': 'Psidium guajava', 'Henna': 'Lawsonia inermis',
+  'Hibiscus': 'Hibiscus rosa-sinensis', 'Honge': 'Pongamia pinnata',
+  'Insulin': 'Costus igneus', 'Jackfruit': 'Artocarpus heterophyllus',
+  'Kambajala': 'Andrographis paniculata', 'Lemon': 'Citrus limon',
+  'Malabar_Spinach': 'Basella alba', 'Mango': 'Mangifera indica',
+  'Marigold': 'Tagetes erecta', 'Mint': 'Mentha spicata',
+  'Neem': 'Azadirachta indica', 'Nelavembu': 'Andrographis paniculata',
+};
+
+// IMPORTANT: this demo intentionally does NOT display medicinal-use text.
+// Fabricating or guessing traditional-use claims for a real medicinal-plant
+// tool would be genuinely harmful if wrong. If you want to show use
+// information, load it from your own verified leaf_uses.csv here (e.g.
+// fetch a JSON version of it) rather than hardcoding anything invented.
+const MEDICINAL_USE_INFO = {}; // populate from your own verified source
+
+// ============================================================================
+// APP STATE
+// ============================================================================
+
+let model = null;
+let stream = null;
+let inferenceTimer = null;
+let isInferring = false;
+
+const videoEl = document.getElementById('camera-video');
+const canvasEl = document.getElementById('capture-canvas');
+const resultsContainer = document.getElementById('results-container');
+const statusDot = document.getElementById('status-dot');
+const statusLabel = document.getElementById('status-label');
+const hintText = document.getElementById('hint-text');
+const overlayLoading = document.getElementById('overlay-loading');
+const overlayError = document.getElementById('overlay-error');
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+async function init() {
+  try {
+    await startCamera();
+  } catch (err) {
+    showError('Camera access needed', cameraErrorMessage(err));
+    return;
+  }
+
+  try {
+    await loadModel();
+  } catch (err) {
+    showError('Model failed to load',
+      `Could not load the model from <code>${MODEL_URL}</code>. Check that the ` +
+      `path is correct and the model files uploaded fully. See the browser ` +
+      `console for the exact error.`);
+    console.error(err);
+    return;
+  }
+
+  overlayLoading.classList.add('hidden');
+  statusDot.classList.add('live');
+  statusLabel.textContent = 'Scanning';
+  startInferenceLoop();
+}
+
+async function startCamera() {
+  statusLabel.textContent = 'Requesting camera...';
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false,
+  });
+  videoEl.srcObject = stream;
+  return new Promise((resolve) => {
+    videoEl.onloadedmetadata = () => resolve();
+  });
+}
+
+function cameraErrorMessage(err) {
+  if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+    return 'You denied camera access, or your browser blocked it. Check your ' +
+           'browser\'s site settings for this page and allow the camera, then reload.';
+  }
+  if (err.name === 'NotFoundError') {
+    return 'No camera was found on this device.';
+  }
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+    return 'Camera access requires HTTPS. This page needs to be hosted over ' +
+           'HTTPS (e.g. GitHub Pages) to use the camera on a phone.';
+  }
+  return `${err.name}: ${err.message}`;
+}
+
+async function loadModel() {
+  statusLabel.textContent = 'Loading model...';
+  model = await tf.loadLayersModel(MODEL_URL);
+  // Warm up with a dummy prediction so the first real one isn't slow
+  const warmup = tf.zeros([1, 224, 224, 3]);
+  const warmupResult = model.predict(warmup);
+  warmupResult.dispose();
+  warmup.dispose();
+}
+
+function showError(title, bodyHtml) {
+  overlayLoading.classList.add('hidden');
+  document.getElementById('error-title').textContent = title;
+  document.getElementById('error-body').innerHTML = bodyHtml;
+  overlayError.classList.remove('hidden');
+  statusLabel.textContent = 'Error';
+}
+
+// ============================================================================
+// INFERENCE LOOP
+// ============================================================================
+
+function startInferenceLoop() {
+  inferenceTimer = setInterval(runInference, INFERENCE_INTERVAL_MS);
+}
+
+async function runInference() {
+  if (isInferring || videoEl.readyState < 2) return;
+  isInferring = true;
+
+  try {
+    const ctx = canvasEl.getContext('2d');
+    ctx.drawImage(videoEl, 0, 0, 224, 224);
+
+    const predictions = tf.tidy(() => {
+      const imgTensor = tf.browser.fromPixels(canvasEl);
+      const preprocessed = preprocessForModel(imgTensor).expandDims(0);
+      const output = model.predict(preprocessed);
+      return output.dataSync();
+    });
+
+    updateResults(predictions);
+  } catch (err) {
+    console.error('Inference error:', err);
+  } finally {
+    isInferring = false;
+  }
+}
+
+function updateResults(predictions) {
+  const indexed = Array.from(predictions).map((p, i) => ({ prob: p, index: i }));
+  indexed.sort((a, b) => b.prob - a.prob);
+  const top3 = indexed.slice(0, 3);
+
+  if (top3[0].prob < MIN_CONFIDENCE_TO_SHOW) {
+    hintText.textContent = 'Not confident -- try better lighting or centering';
+    resultsContainer.innerHTML = `
+      <div class="idle-message">
+        <strong>Not sure yet</strong>
+        Move closer, improve lighting, or use a plain background.
+      </div>`;
+    return;
+  }
+
+  hintText.textContent = 'Center the leaf in the frame';
+
+  const rankClasses = ['r0', 'r1', 'r2'];
+  resultsContainer.innerHTML = top3.map((item, rank) => {
+    const name = CLASS_NAMES[item.index] || `Class ${item.index}`;
+    const sci = SCIENTIFIC_NAMES[name] || '';
+    const pct = Math.round(item.prob * 100);
+    return `
+      <div class="result-row">
+        <div class="result-rank ${rankClasses[rank]}">${rank + 1}</div>
+        <div class="result-info">
+          <div class="result-name">${name}</div>
+          ${sci ? `<div class="result-sci">${sci}</div>` : ''}
+          <div class="result-bar-track"><div class="result-bar-fill" style="width:${pct}%"></div></div>
+        </div>
+        <div class="result-pct">${pct}%</div>
+      </div>`;
+  }).join('');
+}
+
+// ============================================================================
+// START
+// ============================================================================
+
+init();
+
+window.addEventListener('beforeunload', () => {
+  if (inferenceTimer) clearInterval(inferenceTimer);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+});
+</script>
+
+</body>
+</html>
