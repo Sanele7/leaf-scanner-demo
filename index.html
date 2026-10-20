@@ -254,75 +254,37 @@ const overlayError = document.getElementById('overlay-error');
 // INITIALIZATION
 // ============================================================================
 
-async function init() {
-  try {
-    await startCamera();
-  } catch (err) {
-    showError('Camera access needed', cameraErrorMessage(err));
-    return;
-  }
-
-  try {
-    await loadModel();
-  } catch (err) {
-    showError('Model failed to load',
-      `Could not load the model from <code>${MODEL_URL}</code>. Check that the ` +
-      `path is correct and the model files uploaded fully. See the browser ` +
-      `console for the exact error.`);
-    console.error(err);
-    return;
-  }
-
-  overlayLoading.classList.add('hidden');
-  statusDot.classList.add('live');
-  statusLabel.textContent = 'Scanning';
-  startInferenceLoop();
-}
 
 async function startCamera() {
   statusLabel.textContent = 'Requesting camera...';
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error(
+      'Camera access is not supported. Open this app in Safari or another supported browser over HTTPS.'
+    );
+  }
+
   stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-    audio: false,
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
   });
+
   videoEl.srcObject = stream;
-  return new Promise((resolve) => {
-    videoEl.onloadedmetadata = () => resolve();
+
+  await new Promise((resolve, reject) => {
+    videoEl.onloadedmetadata = resolve;
+    videoEl.onerror = () => reject(
+      new Error('The camera video metadata could not be loaded.')
+    );
   });
+
+  await videoEl.play();
 }
 
-function cameraErrorMessage(err) {
-  if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-    return 'You denied camera access, or your browser blocked it. Check your ' +
-           'browser\'s site settings for this page and allow the camera, then reload.';
-  }
-  if (err.name === 'NotFoundError') {
-    return 'No camera was found on this device.';
-  }
-  if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-    return 'Camera access requires HTTPS. This page needs to be hosted over ' +
-           'HTTPS (e.g. GitHub Pages) to use the camera on a phone.';
-  }
-  return `${err.name}: ${err.message}`;
-}
-
-async function loadModel() {
-  statusLabel.textContent = 'Loading model...';
-  model = await tf.loadGraphModel(MODEL_URL);
-  // Warm up with a dummy prediction so the first real one isn't slow
-  const warmup = tf.zeros([1, 224, 224, 3]);
-  const warmupResult = model.predict(warmup);
-  warmupResult.dispose();
-  warmup.dispose();
-}
-
-function showError(title, bodyHtml) {
-  overlayLoading.classList.add('hidden');
-  document.getElementById('error-title').textContent = title;
-  document.getElementById('error-body').innerHTML = bodyHtml;
-  overlayError.classList.remove('hidden');
-  statusLabel.textContent = 'Error';
-}
 
 // ============================================================================
 // INFERENCE LOOP
